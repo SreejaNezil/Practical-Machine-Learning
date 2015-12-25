@@ -1,0 +1,135 @@
+---
+title: "PML Course Project"
+date: "Wednesday, December 23, 2015"
+output: html_document
+---
+
+##Executive Summary##
+
+This report is created as a part of the Coursera Practical Machine Learning course project.
+The goal of the project is to analyze data from devices such as FitBit to predict the manner in which people exercised.
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. In this project, we use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways.
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har.
+
+##Data Loading##
+```{r}
+library(rpart)
+library(randomForest)
+library(caret)
+pml_training <- read.csv("pml-training.csv", na.strings=c("NA",""), header=TRUE)
+train_features <- colnames(pml_training)
+length(train_features)
+pml_testing <- read.csv("pml-testing.csv", na.strings=c("NA",""), header=TRUE)
+test_features <- colnames(pml_testing)
+length(test_features)
+```
+
+##Data Cleansing##
+A lot of values in columns are NAs which can compromise the quality of the result.
+Hence, all columns with more than 60% of NAs are ommitted. We also remove columns that do not contribute to the predictions.
+
+```{r}
+#Build a vector with column names that can be ommitted from analysis
+remove_cols <- c()
+for(i in 1:length(pml_training)) {
+    if( sum(is.na(pml_training[ ,i])) /nrow(pml_training) >= .6 ) {
+       remove_cols <- c(remove_cols, train_features[i])
+    }
+}
+#Remove NAs and first 7 columns as they cannot be used as predictors
+pml_training <- pml_training[ ,!(names(pml_training) %in% remove_cols)]
+pml_training <- pml_training[,8:length(colnames(pml_training))]
+
+pml_testing <- pml_testing[,!(names(pml_testing) %in% remove_cols)]
+pml_testing <- pml_testing[,8:length(colnames(pml_testing))]
+
+# Show remaining columns.
+#colnames(pml_training)
+#colnames(pml_testing)
+
+#Check for covariates to see if any of them have near zero variability
+low_variance_cols <- nearZeroVar(pml_training, saveMetrics=TRUE)
+low_variance_cols
+```
+
+Since all columns have a considerable amount of variance, we are not ommiting any fuurther columns
+
+We have a large training data set and this can be split into 2 sets to perform better modelling
+```{r}
+set.seed(10)
+inTrain <- createDataPartition(y=pml_training$classe, p=0.7, list=F)
+trainingset1 <- pml_training[inTrain, ]
+trainingset2 <- pml_training[-inTrain, ]
+dim(trainingset2)
+```
+
+##Data Modelling and Predictions##
+We being our data modelling and predictions with decision trees and confusion matrix. The data from trainingset1 is modelled into decision and the predictions are plotted. The predictions are also validated using confusion matrix.
+
+```{r}
+#Fit the model on to trainingset1
+library(rpart.plot)
+dtFit <- rpart(classe ~ ., data=trainingset1, method="class")
+rpart.plot(dtFit, main="Classification Tree", extra=102, under=TRUE, faclen=0)
+
+#Use the model to predict using data from second training set
+dtprediction <- predict(dtFit, trainingset2, type = "class")
+confusionMatrix(dtprediction, trainingset2$classe)
+```
+
+The Confusion Matrix above shows the prediction accuracy is only 72%. Hence we try a second model called the Random Forest Model and the trainingset1.We train the model using 3-fold cross validation to select optimal parametes.
+```{r, cache=TRUE}
+fitControl <- trainControl(method="cv", number=3, verboseIter=F)
+
+#Fit the RF model on training set 1
+RFMfit <- train(classe ~ . , method="rf", data = trainingset1, trControl=fitControl)
+RFMfit$finalModel
+```
+
+Next, we can use the fitted model for predictions using the trainingset2
+
+```{r, cache=TRUE}
+fittedPrediction <- predict(RFMfit, newdata=trainingset2)
+
+# show confusion matrix to get estimate of out-of-sample error
+confusionMatrix(trainingset2$classe, fittedPrediction)
+
+```
+
+###Cross validation and model selection###
+With an Accuracy of 99.8%, it is clear that the Random Forest Model yeilds better results than the decision tree model. Hence it can be concluded that Random Forest Model is the best model to use for predictions. The out-of-sample error is only 0.2%.
+
+###Re-training the Selected Model###
+Before predicting on the test set, it is important to train the model on the full training set, rather than using a model trained on a reduced training set, in order to produce the most accurate predictions. Therefore, I now repeat everything I did above on the complete training set
+
+```{r, cache=TRUE}
+fitControl <- trainControl(method="cv", number=3, verboseIter=F)
+fit <- train(classe ~ ., data=pml_training, method="rf", trControl=fitControl)
+```
+
+###Test set predictions and output generation###
+
+```{r, cache=TRUE}
+# predict on test set
+testDataPrediction <- predict(fit, newdata=pml_testing)
+
+#Write predictions into files
+
+testDataPrediction <- as.character(testDataPrediction)
+
+#function to write data to files
+pmlProjectResults <- function(x) {
+    n <- length(x)
+    for(i in 1:n) {
+        filename <- paste0("problem_id_", i, ".txt")
+        write.table(x[i], file=filename, quote=F, row.names=F, col.names=F)
+    }
+}
+
+# create result files to submit
+pmlProjectResults(testDataPrediction)
+
+```
+
+
